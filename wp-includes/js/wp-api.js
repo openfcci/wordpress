@@ -6,12 +6,17 @@
 	 * Initialise the WP_API.
 	 */
 	function WP_API() {
+		/** @namespace wp.api.models */
 		this.models = {};
+		/** @namespace wp.api.collections */
 		this.collections = {};
+		/** @namespace wp.api.views */
 		this.views = {};
 	}
 
+	/** @namespace wp */
 	window.wp            = window.wp || {};
+	/** @namespace wp.api */
 	wp.api               = wp.api || new WP_API();
 	wp.api.versionString = wp.api.versionString || 'wp/v2/';
 
@@ -28,9 +33,39 @@
 
 	var pad, r;
 
+	/** @namespace wp */
 	window.wp = window.wp || {};
+	/** @namespace wp.api */
 	wp.api = wp.api || {};
+	/** @namespace wp.api.utils */
 	wp.api.utils = wp.api.utils || {};
+
+	/**
+	 * Determine model based on API route.
+	 *
+	 * @param {string} route    The API route.
+	 *
+	 * @return {Backbone Model} The model found at given route. Undefined if not found.
+	 */
+	wp.api.getModelByRoute = function( route ) {
+		return _.find( wp.api.models, function( model ) {
+			return model.prototype.route && route === model.prototype.route.index;
+		} );
+	};
+
+	/**
+	 * Determine collection based on API route.
+	 *
+	 * @param {string} route    The API route.
+	 *
+	 * @return {Backbone Model} The collection found at given route. Undefined if not found.
+	 */
+	wp.api.getCollectionByRoute = function( route ) {
+		return _.find( wp.api.collections, function( collection ) {
+			return collection.prototype.route && route === collection.prototype.route.index;
+		} );
+	};
+
 
 	/**
 	 * ECMAScript 5 shim, adapted from MDN.
@@ -997,7 +1032,11 @@
 
 	var Endpoint, initializedDeferreds = {},
 		wpApiSettings = window.wpApiSettings || {};
+
+	/** @namespace wp */
 	window.wp = window.wp || {};
+
+	/** @namespace wp.api */
 	wp.api    = wp.api || {};
 
 	// If wpApiSettings is unavailable, try the default.
@@ -1005,7 +1044,7 @@
 		wpApiSettings.root = window.location.origin + '/wp-json/';
 	}
 
-	Endpoint = Backbone.Model.extend( {
+	Endpoint = Backbone.Model.extend(/** @lends Endpoint.prototype */{
 		defaults: {
 			apiRoot: wpApiSettings.root,
 			versionString: wp.api.versionString,
@@ -1054,6 +1093,8 @@
 					 * When the server returns the schema model data, store the data in a sessionCache so we don't
 					 * have to retrieve it again for this session. Then, construct the models and collections based
 					 * on the schema model data.
+					 *
+					 * @callback
 					 */
 					success: function( newSchemaModel ) {
 
@@ -1112,7 +1153,10 @@
 					'PostsRevisions':  'PostRevisions',
 					'PostsTags':       'PostTags'
 				}
-			};
+			},
+
+			modelEndpoints = routeModel.get( 'modelEndpoints' ),
+			modelRegex     = new RegExp( '(?:.*[+)]|\/(' + modelEndpoints.join( '|' ) + '))$' );
 
 			/**
 			 * Iterate thru the routes, picking up models and collections to build. Builds two arrays,
@@ -1126,8 +1170,8 @@
 			/**
 			 * Tracking objects for models and collections.
 			 */
-			loadingObjects.models      = routeModel.get( 'models' );
-			loadingObjects.collections = routeModel.get( 'collections' );
+			loadingObjects.models      = {};
+			loadingObjects.collections = {};
 
 			_.each( routeModel.schemaModel.get( 'routes' ), function( route, index ) {
 
@@ -1137,8 +1181,8 @@
 						index !== ( '/' + routeModel.get( 'versionString' ).slice( 0, -1 ) )
 				) {
 
-					// Single items end with a regex (or the special case 'me').
-					if ( /(?:.*[+)]|\/me)$/.test( index ) ) {
+					// Single items end with a regex, or a special case word.
+					if ( modelRegex.test( index ) ) {
 						modelRoutes.push( { index: index, route: route } );
 					} else {
 
@@ -1310,7 +1354,9 @@
 					loadingObjects.collections[ collectionClassName ] = wp.api.WPApiBaseCollection.extend( {
 
 						// For the url of a root level collection, use a string.
-						url: routeModel.get( 'apiRoot' ) + routeModel.get( 'versionString' ) + routeName,
+						url: function() {
+							return routeModel.get( 'apiRoot' ) + routeModel.get( 'versionString' ) + routeName;
+						},
 
 						// Specify the model that this collection contains.
 						model: function( attrs, options ) {
@@ -1337,13 +1383,15 @@
 				loadingObjects.models[ index ] = wp.api.utils.addMixinsAndHelpers( model, index, loadingObjects );
 			} );
 
+			// Set the routeModel models and collections.
+			routeModel.set( 'models', loadingObjects.models );
+			routeModel.set( 'collections', loadingObjects.collections );
+
 		}
 
 	} );
 
-	wp.api.endpoints = new Backbone.Collection( {
-		model: Endpoint
-	} );
+	wp.api.endpoints = new Backbone.Collection();
 
 	/**
 	 * Initialize the wp-api, optionally passing the API root.
@@ -1356,29 +1404,32 @@
 	wp.api.init = function( args ) {
 		var endpoint, attributes = {}, deferred, promise;
 
-		args                     = args || {};
-		attributes.apiRoot       = args.apiRoot || wpApiSettings.root;
-		attributes.versionString = args.versionString || wpApiSettings.versionString;
-		attributes.schema        = args.schema || null;
+		args                      = args || {};
+		attributes.apiRoot        = args.apiRoot || wpApiSettings.root || '/wp-json';
+		attributes.versionString  = args.versionString || wpApiSettings.versionString || 'wp/v2/';
+		attributes.schema         = args.schema || null;
+		attributes.modelEndpoints = args.modelEndpoints || [ 'me', 'settings' ];
 		if ( ! attributes.schema && attributes.apiRoot === wpApiSettings.root && attributes.versionString === wpApiSettings.versionString ) {
 			attributes.schema = wpApiSettings.schema;
 		}
 
 		if ( ! initializedDeferreds[ attributes.apiRoot + attributes.versionString ] ) {
-			endpoint = wp.api.endpoints.findWhere( { apiRoot: attributes.apiRoot, versionString: attributes.versionString } );
+
+			// Look for an existing copy of this endpoint
+			endpoint = wp.api.endpoints.findWhere( { 'apiRoot': attributes.apiRoot, 'versionString': attributes.versionString } );
 			if ( ! endpoint ) {
 				endpoint = new Endpoint( attributes );
-				wp.api.endpoints.add( endpoint );
 			}
 			deferred = jQuery.Deferred();
 			promise = deferred.promise();
 
-			endpoint.schemaConstructed.done( function( endpoint ) {
+			endpoint.schemaConstructed.done( function( resolvedEndpoint ) {
+				wp.api.endpoints.add( resolvedEndpoint );
 
 				// Map the default endpoints, extending any already present items (including Schema model).
-				wp.api.models      = _.extend( endpoint.get( 'models' ), wp.api.models );
-				wp.api.collections = _.extend( endpoint.get( 'collections' ), wp.api.collections );
-				deferred.resolveWith( wp.api, [ endpoint ] );
+				wp.api.models      = _.extend( wp.api.models, resolvedEndpoint.get( 'models' ) );
+				wp.api.collections = _.extend( wp.api.collections, resolvedEndpoint.get( 'collections' ) );
+				deferred.resolve( resolvedEndpoint );
 			} );
 			initializedDeferreds[ attributes.apiRoot + attributes.versionString ] = promise;
 		}

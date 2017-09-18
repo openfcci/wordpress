@@ -1036,6 +1036,12 @@ function wp_convert_widget_settings($base_name, $option_name, $settings) {
 function the_widget( $widget, $instance = array(), $args = array() ) {
 	global $wp_widget_factory;
 
+	if ( ! isset( $wp_widget_factory->widgets[ $widget ] ) ) {
+		/* translators: %s: register_widget() */
+		_doing_it_wrong( __FUNCTION__, sprintf( __( 'Widgets need to be registered using %s, before they can be displayed.' ), '<code>register_widget()</code>' ), '4.9.0' );
+		return;
+	}
+
 	$widget_obj = $wp_widget_factory->widgets[$widget];
 	if ( ! ( $widget_obj instanceof WP_Widget ) ) {
 		return;
@@ -1352,7 +1358,7 @@ function wp_widget_rss_form( $args, $inputs = null ) {
 	<input class="widefat" id="rss-url-<?php echo $esc_number; ?>" name="widget-rss[<?php echo $esc_number; ?>][url]" type="text" value="<?php echo esc_url( $args['url'] ); ?>" /></p>
 <?php endif; if ( $inputs['title'] ) : ?>
 	<p><label for="rss-title-<?php echo $esc_number; ?>"><?php _e( 'Give the feed a title (optional):' ); ?></label>
-	<input class="widefat" id="rss-title-<?php echo $esc_number; ?>" name="widget-rss[<?php echo $esc_number; ?>][title]" type="text" value="<?php echo esc_attr( $args['title'] ); ?>" placeholder="<?php esc_attr_e( '(Title from feed)' ) ?>" /></p>
+	<input class="widefat" id="rss-title-<?php echo $esc_number; ?>" name="widget-rss[<?php echo $esc_number; ?>][title]" type="text" value="<?php echo esc_attr( $args['title'] ); ?>" /></p>
 <?php endif; if ( $inputs['items'] ) : ?>
 	<p><label for="rss-items-<?php echo $esc_number; ?>"><?php _e( 'How many items would you like to display?' ); ?></label>
 	<select id="rss-items-<?php echo $esc_number; ?>" name="widget-rss[<?php echo $esc_number; ?>][items]">
@@ -1436,35 +1442,45 @@ function wp_widget_rss_process( $widget_rss, $check_feed = true ) {
  * @since 2.2.0
  */
 function wp_widgets_init() {
-	if ( !is_blog_installed() )
+	if ( ! is_blog_installed() ) {
 		return;
+	}
 
-	register_widget('WP_Widget_Pages');
+	register_widget( 'WP_Widget_Pages' );
 
-	register_widget('WP_Widget_Calendar');
+	register_widget( 'WP_Widget_Calendar' );
 
-	register_widget('WP_Widget_Archives');
+	register_widget( 'WP_Widget_Archives' );
 
-	if ( get_option( 'link_manager_enabled' ) )
-		register_widget('WP_Widget_Links');
+	if ( get_option( 'link_manager_enabled' ) ) {
+		register_widget( 'WP_Widget_Links' );
+	}
 
-	register_widget('WP_Widget_Meta');
+	register_widget( 'WP_Widget_Media_Audio' );
 
-	register_widget('WP_Widget_Search');
+	register_widget( 'WP_Widget_Media_Image' );
 
-	register_widget('WP_Widget_Text');
+	register_widget( 'WP_Widget_Media_Video' );
 
-	register_widget('WP_Widget_Categories');
+	register_widget( 'WP_Widget_Meta' );
 
-	register_widget('WP_Widget_Recent_Posts');
+	register_widget( 'WP_Widget_Search' );
 
-	register_widget('WP_Widget_Recent_Comments');
+	register_widget( 'WP_Widget_Text' );
 
-	register_widget('WP_Widget_RSS');
+	register_widget( 'WP_Widget_Categories' );
 
-	register_widget('WP_Widget_Tag_Cloud');
+	register_widget( 'WP_Widget_Recent_Posts' );
 
-	register_widget('WP_Nav_Menu_Widget');
+	register_widget( 'WP_Widget_Recent_Comments' );
+
+	register_widget( 'WP_Widget_RSS' );
+
+	register_widget( 'WP_Widget_Tag_Cloud' );
+
+	register_widget( 'WP_Nav_Menu_Widget' );
+
+	register_widget( 'WP_Widget_Custom_HTML' );
 
 	/**
 	 * Fires after all default WordPress widgets have been registered.

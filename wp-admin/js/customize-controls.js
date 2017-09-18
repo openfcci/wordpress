@@ -1,6 +1,212 @@
-/* global _wpCustomizeHeader, _wpCustomizeBackground, _wpMediaViewsL10n, MediaElementPlayer */
+/* global _wpCustomizeHeader, _wpCustomizeBackground, _wpMediaViewsL10n, MediaElementPlayer, console */
 (function( exports, $ ){
 	var Container, focus, normalizedTransitionendEventName, api = wp.customize;
+
+	/**
+	 * A collection of observable notifications.
+	 *
+	 * @since 4.9.0
+	 * @class
+	 * @augments wp.customize.Values
+	 */
+	api.Notifications = api.Values.extend({
+
+		/**
+		 * Whether the alternative style should be used.
+		 *
+		 * @since 4.9.0
+		 * @type {boolean}
+		 */
+		alt: false,
+
+		/**
+		 * The default constructor for items of the collection.
+		 *
+		 * @since 4.9.0
+		 * @type {object}
+		 */
+		defaultConstructor: api.Notification,
+
+		/**
+		 * Initialize notifications area.
+		 *
+		 * @since 4.9.0
+		 * @constructor
+		 * @param {object}  options - Options.
+		 * @param {jQuery}  [options.container] - Container element for notifications. This can be injected later.
+		 * @param {boolean} [options.alt] - Whether alternative style should be used when rendering notifications.
+		 * @returns {void}
+		 * @this {wp.customize.Notifications}
+		 */
+		initialize: function( options ) {
+			var collection = this;
+
+			api.Values.prototype.initialize.call( collection, options );
+
+			// Keep track of the order in which the notifications were added for sorting purposes.
+			collection._addedIncrement = 0;
+			collection._addedOrder = {};
+
+			// Trigger change event when notification is added or removed.
+			collection.bind( 'add', function( notification ) {
+				collection.trigger( 'change', notification );
+			});
+			collection.bind( 'removed', function( notification ) {
+				collection.trigger( 'change', notification );
+			});
+		},
+
+		/**
+		 * Get the number of notifications added.
+		 *
+		 * @since 4.9.0
+		 * @return {number} Count of notifications.
+		 */
+		count: function() {
+			return _.size( this._value );
+		},
+
+		/**
+		 * Add notification to the collection.
+		 *
+		 * @since 4.9.0
+		 * @param {string} code - Notification code.
+		 * @param {object} params - Notification params.
+		 * @return {api.Notification} Added instance (or existing instance if it was already added).
+		 */
+		add: function( code, params ) {
+			var collection = this;
+			if ( ! collection.has( code ) ) {
+				collection._addedIncrement += 1;
+				collection._addedOrder[ code ] = collection._addedIncrement;
+			}
+			return api.Values.prototype.add.call( this, code, params );
+		},
+
+		/**
+		 * Add notification to the collection.
+		 *
+		 * @since 4.9.0
+		 * @param {string} code - Notification code to remove.
+		 * @return {api.Notification} Added instance (or existing instance if it was already added).
+		 */
+		remove: function( code ) {
+			var collection = this;
+			delete collection._addedOrder[ code ];
+			return api.Values.prototype.remove.call( this, code );
+		},
+
+		/**
+		 * Get list of notifications.
+		 *
+		 * Notifications may be sorted by type followed by added time.
+		 *
+		 * @since 4.9.0
+		 * @param {object}  args - Args.
+		 * @param {boolean} [args.sort=false] - Whether to return the notifications sorted.
+		 * @return {Array.<wp.customize.Notification>} Notifications.
+		 * @this {wp.customize.Notifications}
+		 */
+		get: function( args ) {
+			var collection = this, notifications, errorTypePriorities, params;
+			notifications = _.values( collection._value );
+
+			params = _.extend(
+				{ sort: false },
+				args
+			);
+
+			if ( params.sort ) {
+				errorTypePriorities = { error: 4, warning: 3, success: 2, info: 1 };
+				notifications.sort( function( a, b ) {
+					var aPriority = 0, bPriority = 0;
+					if ( ! _.isUndefined( errorTypePriorities[ a.type ] ) ) {
+						aPriority = errorTypePriorities[ a.type ];
+					}
+					if ( ! _.isUndefined( errorTypePriorities[ b.type ] ) ) {
+						bPriority = errorTypePriorities[ b.type ];
+					}
+					if ( aPriority !== bPriority ) {
+						return bPriority - aPriority; // Show errors first.
+					}
+					return collection._addedOrder[ b.code ] - collection._addedOrder[ a.code ]; // Show newer notifications higher.
+				});
+			}
+
+			return notifications;
+		},
+
+		/**
+		 * Render notifications area.
+		 *
+		 * @since 4.9.0
+		 * @returns {void}
+		 * @this {wp.customize.Notifications}
+		 */
+		render: function() {
+			var collection = this,
+				notifications,
+				renderedNotificationContainers,
+				prevRenderedCodes,
+				nextRenderedCodes,
+				addedCodes,
+				removedCodes,
+				listElement;
+
+			// Short-circuit if there are no container to render into.
+			if ( ! collection.container || ! collection.container.length ) {
+				return;
+			}
+			listElement = collection.container.children( 'ul' ).first();
+			if ( ! listElement.length ) {
+				listElement = $( '<ul></ul>' );
+				collection.container.append( listElement );
+			}
+
+			notifications = collection.get( { sort: true } );
+
+			renderedNotificationContainers = {};
+			listElement.find( '> [data-code]' ).each( function() {
+				renderedNotificationContainers[ $( this ).data( 'code' ) ] = $( this );
+			});
+
+			collection.container.toggle( 0 !== notifications.length );
+
+			nextRenderedCodes = _.pluck( notifications, 'code' );
+			prevRenderedCodes = _.keys( renderedNotificationContainers );
+
+			// Short-circuit if there are no notifications added.
+			if ( _.isEqual( nextRenderedCodes, prevRenderedCodes ) ) {
+				return;
+			}
+
+			addedCodes = _.difference( nextRenderedCodes, prevRenderedCodes );
+			removedCodes = _.difference( prevRenderedCodes, nextRenderedCodes );
+
+			// Remove notifications that have been removed.
+			_.each( renderedNotificationContainers, function( renderedContainer, code ) {
+				if ( -1 !== _.indexOf( removedCodes, code ) ) {
+					renderedContainer.remove(); // @todo Consider slideUp as enhancement.
+				}
+			});
+
+			// Add all notifications in the sorted order.
+			_.each( notifications, function( notification ) {
+				var notificationContainer = renderedNotificationContainers[ notification.code ];
+				if ( notificationContainer ) {
+					listElement.append( notificationContainer );
+				} else {
+					notificationContainer = $( notification.render() );
+					listElement.append( notificationContainer ); // @todo Consider slideDown() as enhancement.
+					if ( wp.a11y ) {
+						wp.a11y.speak( notification.message, 'assertive' );
+					}
+				}
+			});
+
+			collection.trigger( 'rendered' );
+		}
+	});
 
 	/**
 	 * A Customizer Setting.
@@ -528,10 +734,11 @@
 		 *
 		 * @since 4.1.0
 		 *
-		 * @param {Boolean} active
-		 * @param {Object}  args
-		 * @param {Object}  args.duration
-		 * @param {Object}  args.completeCallback
+		 * @param {boolean}  active - The active state to transiution to.
+		 * @param {Object}   [args] - Args.
+		 * @param {Object}   [args.duration] - The duration for the slideUp/slideDown animation.
+		 * @param {boolean}  [args.unchanged] - Whether the state is already known to not be changed, and so short-circuit with calling completeCallback early.
+		 * @param {Function} [args.completeCallback] - Function to call when the slideUp/slideDown has completed.
 		 */
 		onChangeActive: function( active, args ) {
 			var construct = this,
@@ -564,24 +771,24 @@
 				}
 			}
 
-			if ( ! $.contains( document, headContainer ) ) {
-				// jQuery.fn.slideUp is not hiding an element if it is not in the DOM
+			if ( ! $.contains( document, headContainer.get( 0 ) ) ) {
+				// If the element is not in the DOM, then jQuery.fn.slideUp() does nothing. In this case, a hard toggle is required instead.
 				headContainer.toggle( active );
 				if ( args.completeCallback ) {
 					args.completeCallback();
 				}
 			} else if ( active ) {
-				headContainer.stop( true, true ).slideDown( duration, args.completeCallback );
+				headContainer.slideDown( duration, args.completeCallback );
 			} else {
 				if ( construct.expanded() ) {
 					construct.collapse({
 						duration: duration,
 						completeCallback: function() {
-							headContainer.stop( true, true ).slideUp( duration, args.completeCallback );
+							headContainer.slideUp( duration, args.completeCallback );
 						}
 					});
 				} else {
-					headContainer.stop( true, true ).slideUp( duration, args.completeCallback );
+					headContainer.slideUp( duration, args.completeCallback );
 				}
 			}
 		},
@@ -710,11 +917,19 @@
 			var construct = this,
 				content = construct.contentContainer,
 				overlay = content.closest( '.wp-full-overlay' ),
-				elements, transitionEndCallback;
+				elements, transitionEndCallback, transitionParentPane;
 
 			// Determine set of elements that are affected by the animation.
 			elements = overlay.add( content );
-			if ( _.isUndefined( construct.panel ) || '' === construct.panel() ) {
+
+			if ( ! construct.panel || '' === construct.panel() ) {
+				transitionParentPane = true;
+			} else if ( api.panel( construct.panel() ).contentContainer.hasClass( 'skip-transition' ) ) {
+				transitionParentPane = true;
+			} else {
+				transitionParentPane = false;
+			}
+			if ( transitionParentPane ) {
 				elements = elements.add( '#customize-info, .customize-pane-parent' );
 			}
 
@@ -995,7 +1210,7 @@
 				overlay = section.headContainer.closest( '.wp-full-overlay' ),
 				backBtn = content.find( '.customize-section-back' ),
 				sectionTitle = section.headContainer.find( '.accordion-section-title' ).first(),
-				expand;
+				expand, panel;
 
 			if ( expanded && ! content.hasClass( 'open' ) ) {
 
@@ -1043,6 +1258,12 @@
 				}
 
 			} else if ( ! expanded && content.hasClass( 'open' ) ) {
+				if ( section.panel() ) {
+					panel = api.panel( section.panel() );
+					if ( panel.contentContainer.hasClass( 'skip-transition' ) ) {
+						panel.collapse();
+					}
+				}
 				section._animateChangeExpanded( function() {
 					backBtn.attr( 'tabindex', '-1' );
 					sectionTitle.attr( 'tabindex', '0' );
@@ -1148,6 +1369,15 @@
 		 */
 		attachEvents: function () {
 			var section = this;
+
+			// Expand/Collapse accordion sections on click.
+			section.container.find( '.customize-section-back' ).on( 'click keydown', function( event ) {
+				if ( api.utils.isKeydownButNotEnterEvent( event ) ) {
+					return;
+				}
+				event.preventDefault(); // Keep this AFTER the key filter above
+				section.collapse();
+			});
 
 			// Expand/Collapse section/panel.
 			section.container.find( '.change-theme, .customize-theme' ).on( 'click keydown', function( event ) {
@@ -1721,7 +1951,9 @@
 				overlay = accordionSection.closest( '.wp-full-overlay' ),
 				container = accordionSection.closest( '.wp-full-overlay-sidebar-content' ),
 				topPanel = panel.headContainer.find( '.accordion-section-title' ),
-				backBtn = accordionSection.find( '.customize-panel-back' );
+				backBtn = accordionSection.find( '.customize-panel-back' ),
+				childSections = panel.sections(),
+				skipTransition;
 
 			if ( expanded && ! accordionSection.hasClass( 'current-panel' ) ) {
 				// Collapse any sibling sections/panels
@@ -1736,35 +1968,50 @@
 					}
 				});
 
-				panel._animateChangeExpanded( function() {
-					topPanel.attr( 'tabindex', '-1' );
-					backBtn.attr( 'tabindex', '0' );
+				if ( panel.params.autoExpandSoleSection && 1 === childSections.length && childSections[0].active.get() ) {
+					accordionSection.addClass( 'current-panel skip-transition' );
+					overlay.addClass( 'in-sub-panel' );
 
-					backBtn.focus();
-					accordionSection.css( 'top', '' );
-					container.scrollTop( 0 );
+					childSections[0].expand( {
+						completeCallback: args.completeCallback
+					} );
+				} else {
+					panel._animateChangeExpanded( function() {
+						topPanel.attr( 'tabindex', '-1' );
+						backBtn.attr( 'tabindex', '0' );
 
-					if ( args.completeCallback ) {
-						args.completeCallback();
-					}
-				} );
+						backBtn.focus();
+						accordionSection.css( 'top', '' );
+						container.scrollTop( 0 );
 
-				overlay.addClass( 'in-sub-panel' );
-				accordionSection.addClass( 'current-panel' );
+						if ( args.completeCallback ) {
+							args.completeCallback();
+						}
+					} );
+
+					accordionSection.addClass( 'current-panel' );
+					overlay.addClass( 'in-sub-panel' );
+				}
+
 				api.state( 'expandedPanel' ).set( panel );
 
 			} else if ( ! expanded && accordionSection.hasClass( 'current-panel' ) ) {
-				panel._animateChangeExpanded( function() {
-					topPanel.attr( 'tabindex', '0' );
-					backBtn.attr( 'tabindex', '-1' );
+				skipTransition = accordionSection.hasClass( 'skip-transition' );
+				if ( ! skipTransition ) {
+					panel._animateChangeExpanded( function() {
+						topPanel.attr( 'tabindex', '0' );
+						backBtn.attr( 'tabindex', '-1' );
 
-					topPanel.focus();
-					accordionSection.css( 'top', '' );
+						topPanel.focus();
+						accordionSection.css( 'top', '' );
 
-					if ( args.completeCallback ) {
-						args.completeCallback();
-					}
-				} );
+						if ( args.completeCallback ) {
+							args.completeCallback();
+						}
+					} );
+				} else {
+					accordionSection.removeClass( 'skip-transition' );
+				}
 
 				overlay.removeClass( 'in-sub-panel' );
 				accordionSection.removeClass( 'current-panel' );
@@ -1842,7 +2089,9 @@
 			control.priority = new api.Value();
 			control.active = new api.Value();
 			control.activeArgumentsQueue = [];
-			control.notifications = new api.Values({ defaultConstructor: api.Notification });
+			control.notifications = new api.Notifications({
+				alt: control.altNotice
+			});
 
 			control.elements = [];
 
@@ -1932,21 +2181,17 @@
 
 			// After the control is embedded on the page, invoke the "ready" method.
 			control.deferred.embedded.done( function () {
-				/*
-				 * Note that this debounced/deferred rendering is needed for two reasons:
-				 * 1) The 'remove' event is triggered just _before_ the notification is actually removed.
-				 * 2) Improve performance when adding/removing multiple notifications at a time.
-				 */
-				var debouncedRenderNotifications = _.debounce( function renderNotifications() {
-					control.renderNotifications();
+				var renderNotifications = function() {
+					control.notifications.render();
+				};
+				control.notifications.container = control.getNotificationsContainerElement();
+				control.notifications.bind( 'rendered', function() {
+					var notifications = control.notifications.get();
+					control.container.toggleClass( 'has-notifications', 0 !== notifications.length );
+					control.container.toggleClass( 'has-error', 0 !== _.where( notifications, { type: 'error' } ).length );
 				} );
-				control.notifications.bind( 'add', function( notification ) {
-					wp.a11y.speak( notification.message, 'assertive' );
-					debouncedRenderNotifications();
-				} );
-				control.notifications.bind( 'remove', debouncedRenderNotifications );
-				control.renderNotifications();
-
+				renderNotifications();
+				control.notifications.bind( 'change', _.debounce( renderNotifications ) );
 				control.ready();
 			});
 		},
@@ -2050,11 +2295,17 @@
 		 * Control subclasses may override this method to do their own handling
 		 * of rendering notifications.
 		 *
+		 * @deprecated in favor of `control.notifications.render()`
 		 * @since 4.6.0
 		 * @this {wp.customize.Control}
 		 */
 		renderNotifications: function() {
 			var control = this, container, notifications, hasError = false;
+
+			if ( 'undefined' !== typeof console && console.warn ) {
+				console.warn( '[DEPRECATED] wp.customize.Control.prototype.renderNotifications() is deprecated in favor of instantating a wp.customize.Notifications and calling its render() method.' );
+			}
+
 			container = control.getNotificationsContainerElement();
 			if ( ! container || ! container.length ) {
 				return;
@@ -2266,9 +2517,9 @@
 				availableItem = new api.Menus.AvailableItemModel( {
 					'id': 'post-' + data.post_id, // Used for available menu item Backbone models.
 					'title': title,
-					'type': 'page',
+					'type': 'post_type',
 					'type_label': api.Menus.data.l10n.page_label,
-					'object': 'post_type',
+					'object': 'page',
 					'object_id': data.post_id,
 					'url': data.url
 				} );
@@ -3386,6 +3637,9 @@
 	api.section = new api.Values({ defaultConstructor: api.Section });
 	api.panel = new api.Values({ defaultConstructor: api.Panel });
 
+	// Create the collection for global Notifications.
+	api.notifications = new api.Notifications();
+
 	/**
 	 * An object that fetches a preview in the background of the document, which
 	 * allows for seamless replacement of an existing preview.
@@ -4122,7 +4376,7 @@
 
 				// Remove notification errors that are no longer valid.
 				setting.notifications.each( function( notification ) {
-					if ( 'error' === notification.type && ( true === validity || ! validity[ notification.code ] ) ) {
+					if ( notification.fromServer && 'error' === notification.type && ( true === validity || ! validity[ notification.code ] ) ) {
 						setting.notifications.remove( notification.code );
 					}
 				} );
@@ -4388,10 +4642,11 @@
 				function captureSettingModifiedDuringSave( setting ) {
 					modifiedWhileSaving[ setting.id ] = true;
 				}
-				api.bind( 'change', captureSettingModifiedDuringSave );
 
 				submit = function () {
 					var request, query, settingInvalidities = {}, latestRevision = api._latestRevision;
+
+					api.bind( 'change', captureSettingModifiedDuringSave );
 
 					/*
 					 * Block saving if there are any settings that are marked as
@@ -4459,6 +4714,13 @@
 						api.unbind( 'change', captureSettingModifiedDuringSave );
 					} );
 
+					// Remove notifications that were added due to save failures.
+					api.notifications.each( function( notification ) {
+						if ( notification.saveFailure ) {
+							api.notifications.remove( notification.code );
+						}
+					});
+
 					request.fail( function ( response ) {
 
 						if ( '0' === response ) {
@@ -4476,6 +4738,22 @@
 								previewer.save();
 								previewer.preview.iframe.show();
 							} );
+						} else if ( response.code ) {
+							api.notifications.add( response.code, new api.Notification( response.code, {
+								message: response.message,
+								type: 'error',
+								dismissible: true,
+								fromServer: true,
+								saveFailure: true
+							} ) );
+						} else {
+							api.notifications.add( 'unknown_error', new api.Notification( 'unknown_error', {
+								message: api.l10n.serverSaveError,
+								type: 'error',
+								dismissible: true,
+								fromServer: true,
+								saveFailure: true
+							} ) );
 						}
 
 						if ( response.setting_validities ) {
@@ -4545,6 +4823,16 @@
 
 				return deferred.promise();
 			}
+		});
+
+		// Ensure preview nonce is included with every customized request, to allow post data to be read.
+		$.ajaxPrefilter( function injectPreviewNonce( options ) {
+			if ( ! /wp_customize=on/.test( options.data ) ) {
+				return;
+			}
+			options.data += '&' + $.param({
+				customize_preview_nonce: api.settings.nonce.preview
+			});
 		});
 
 		// Refresh the nonces if the preview sends updated nonces over.
@@ -4635,6 +4923,29 @@
 			values.bind( 'change', debouncedReflowPaneContents );
 			values.bind( 'remove', debouncedReflowPaneContents );
 		} );
+
+		// Set up global notifications area.
+		api.bind( 'ready', function setUpGlobalNotificationsArea() {
+			var sidebar, containerHeight, containerInitialTop;
+			api.notifications.container = $( '#customize-notifications-area' );
+
+			api.notifications.bind( 'change', _.debounce( function() {
+				api.notifications.render();
+			} ) );
+
+			sidebar = $( '.wp-full-overlay-sidebar-content' );
+			api.notifications.bind( 'rendered', function updateSidebarTop() {
+				sidebar.css( 'top', '' );
+				if ( 0 !== api.notifications.count() ) {
+					containerHeight = api.notifications.container.outerHeight() + 1;
+					containerInitialTop = parseInt( sidebar.css( 'top' ), 10 );
+					sidebar.css( 'top', containerInitialTop + containerHeight + 'px' );
+				}
+				api.notifications.trigger( 'sidebarTopUpdated' );
+			});
+
+			api.notifications.render();
+		});
 
 		// Save and activated states
 		(function() {
@@ -4730,6 +5041,12 @@
 			 */
 			populateChangesetUuidParam = function( isIncluded ) {
 				var urlParser, queryParams;
+
+				// Abort on IE9 which doesn't support history management.
+				if ( ! history.replaceState ) {
+					return;
+				}
+
 				urlParser = document.createElement( 'a' );
 				urlParser.href = location.href;
 				queryParams = api.utils.parseQueryString( urlParser.search.substr( 1 ) );
@@ -4748,11 +5065,9 @@
 				history.replaceState( {}, document.title, urlParser.href );
 			};
 
-			if ( history.replaceState ) {
-				changesetStatus.bind( function( newStatus ) {
-					populateChangesetUuidParam( '' !== newStatus && 'publish' !== newStatus );
-				} );
-			}
+			changesetStatus.bind( function( newStatus ) {
+				populateChangesetUuidParam( '' !== newStatus && 'publish' !== newStatus );
+			} );
 
 			// Expose states to the API.
 			api.state = state;
@@ -4915,11 +5230,31 @@
 				}
 
 				var scrollTop = parentContainer.scrollTop(),
-					isScrollingUp = ( lastScrollTop ) ? scrollTop <= lastScrollTop : true;
+					scrollDirection;
 
+				if ( ! lastScrollTop ) {
+					scrollDirection = 1;
+				} else {
+					if ( scrollTop === lastScrollTop ) {
+						scrollDirection = 0;
+					} else if ( scrollTop > lastScrollTop ) {
+						scrollDirection = 1;
+					} else {
+						scrollDirection = -1;
+					}
+				}
 				lastScrollTop = scrollTop;
-				positionStickyHeader( activeHeader, scrollTop, isScrollingUp );
+				if ( 0 !== scrollDirection ) {
+					positionStickyHeader( activeHeader, scrollTop, scrollDirection );
+				}
 			}, 8 ) );
+
+			// Update header position on sidebar layout change.
+			api.notifications.bind( 'sidebarTopUpdated', function() {
+				if ( activeHeader && activeHeader.element.hasClass( 'is-sticky' ) ) {
+					activeHeader.element.css( 'top', parentContainer.css( 'top' ) );
+				}
+			});
 
 			// Release header element if it is sticky.
 			releaseStickyHeader = function( headerElement ) {
@@ -4934,13 +5269,15 @@
 
 			// Reset position of the sticky header.
 			resetStickyHeader = function( headerElement, headerParent ) {
-				headerElement
-					.removeClass( 'maybe-sticky is-in-view' )
-					.css( {
-						width: '',
-						top: ''
-					} );
-				headerParent.css( 'padding-top', '' );
+				if ( headerElement.hasClass( 'is-in-view' ) ) {
+					headerElement
+						.removeClass( 'maybe-sticky is-in-view' )
+						.css( {
+							width: '',
+							top:   ''
+						} );
+					headerParent.css( 'padding-top', '' );
+				}
 			};
 
 			/**
@@ -4967,19 +5304,20 @@
 			 * @since 4.7.0
 			 * @access private
 			 *
-			 * @param {object}  header        Header.
-			 * @param {number}  scrollTop     Scroll top.
-			 * @param {boolean} isScrollingUp Is scrolling up?
+			 * @param {object} header - Header.
+			 * @param {number} scrollTop - Scroll top.
+			 * @param {number} scrollDirection - Scroll direction, negative number being up and positive being down.
 			 * @returns {void}
 			 */
-			positionStickyHeader = function( header, scrollTop, isScrollingUp ) {
+			positionStickyHeader = function( header, scrollTop, scrollDirection ) {
 				var headerElement = header.element,
 					headerParent = header.parent,
 					headerHeight = header.height,
 					headerTop = parseInt( headerElement.css( 'top' ), 10 ),
 					maybeSticky = headerElement.hasClass( 'maybe-sticky' ),
 					isSticky = headerElement.hasClass( 'is-sticky' ),
-					isInView = headerElement.hasClass( 'is-in-view' );
+					isInView = headerElement.hasClass( 'is-in-view' ),
+					isScrollingUp = ( -1 === scrollDirection );
 
 				// When scrolling down, gradually hide sticky header.
 				if ( ! isScrollingUp ) {
@@ -5022,7 +5360,7 @@
 						headerElement
 							.addClass( 'is-sticky' )
 							.css( {
-								top:   '',
+								top:   parentContainer.css( 'top' ),
 								width: headerParent.outerWidth() + 'px'
 							} );
 					}
@@ -5293,50 +5631,212 @@
 			});
 		});
 
-		// Allow tabs to be entered in Custom CSS textarea.
-		api.control( 'custom_css', function setupCustomCssControl( control ) {
-			control.deferred.embedded.done( function allowTabs() {
-				var $textarea = control.container.find( 'textarea' ), textarea = $textarea[0];
+		// Add code editor for Custom CSS.
+		(function() {
+			var ready, sectionReady = $.Deferred(), controlReady = $.Deferred();
 
-				$textarea.on( 'blur', function onBlur() {
-					$textarea.data( 'next-tab-blurs', false );
-				} );
+			api.section( 'custom_css', function( section ) {
+				section.deferred.embedded.done( function() {
+					if ( section.expanded() ) {
+						sectionReady.resolve( section );
+					} else {
+						section.expanded.bind( function( isExpanded ) {
+							if ( isExpanded ) {
+								sectionReady.resolve( section );
+							}
+						} );
+					}
+				});
+			});
+			api.control( 'custom_css', function( control ) {
+				control.deferred.embedded.done( function() {
+					controlReady.resolve( control );
+				});
+			});
 
-				$textarea.on( 'keydown', function onKeydown( event ) {
-					var selectionStart, selectionEnd, value, tabKeyCode = 9, escKeyCode = 27;
+			ready = $.when( sectionReady, controlReady );
 
-					if ( escKeyCode === event.keyCode ) {
-						if ( ! $textarea.data( 'next-tab-blurs' ) ) {
-							$textarea.data( 'next-tab-blurs', true );
-							event.stopPropagation(); // Prevent collapsing the section.
+			// Set up the section desription behaviors.
+			ready.done( function setupSectionDescription( section, control ) {
+
+				// Close the section description when clicking the close button.
+				section.container.find( '.section-description-buttons .section-description-close' ).on( 'click', function() {
+					section.container.find( '.section-meta .customize-section-description:first' )
+						.removeClass( 'open' )
+						.slideUp()
+						.attr( 'aria-expanded', 'false' );
+				});
+
+				// Reveal help text if setting is empty.
+				if ( ! control.setting.get() ) {
+					section.container.find( '.section-meta .customize-section-description:first' )
+						.addClass( 'open' )
+						.show()
+						.attr( 'aria-expanded', 'true' );
+				}
+			});
+
+			// Set up the code editor itself.
+			if ( api.settings.customCss && api.settings.customCss.codeEditor ) {
+
+				// Set up the syntax highlighting editor.
+				ready.done( function setupSyntaxHighlightingEditor( section, control ) {
+					var $textarea = control.container.find( 'textarea' ), settings, suspendEditorUpdate = false;
+
+					// Make sure editor gets focused when control is focused.
+					control.focus = (function( originalFocus ) { // eslint-disable-line max-nested-callbacks
+						return function( params ) { // eslint-disable-line max-nested-callbacks
+							var extendedParams = _.extend( {}, params ), originalCompleteCallback;
+							originalCompleteCallback = extendedParams.completeCallback;
+							extendedParams.completeCallback = function() {
+								if ( originalCompleteCallback ) {
+									originalCompleteCallback();
+								}
+								if ( control.editor ) {
+									control.editor.codemirror.focus();
+								}
+							};
+							originalFocus.call( this, extendedParams );
+						};
+					})( control.focus );
+
+					settings = _.extend( {}, api.settings.customCss.codeEditor, {
+
+						/**
+						 * Handle tabbing to the field after the editor.
+						 *
+						 * @returns {void}
+						 */
+						onTabNext: function onTabNext() {
+							var controls, controlIndex;
+							controls = section.controls();
+							controlIndex = controls.indexOf( control );
+							if ( controls.length === controlIndex + 1 ) {
+								$( '#customize-footer-actions .collapse-sidebar' ).focus();
+							} else {
+								controls[ controlIndex + 1 ].container.find( ':focusable:first' ).focus();
+							}
+						},
+
+						/**
+						 * Handle tabbing to the field before the editor.
+						 *
+						 * @returns {void}
+						 */
+						onTabPrevious: function onTabPrevious() {
+							var controls, controlIndex;
+							controls = section.controls();
+							controlIndex = controls.indexOf( control );
+							if ( 0 === controlIndex ) {
+								section.contentContainer.find( '.customize-section-title .customize-help-toggle, .customize-section-title .customize-section-description.open .section-description-close' ).last().focus();
+							} else {
+								controls[ controlIndex - 1 ].contentContainer.find( ':focusable:first' ).focus();
+							}
+						},
+
+						/**
+						 * Update error notice.
+						 *
+						 * @param {Array} errorAnnotations - Error annotations.
+						 * @returns {void}
+						 */
+						onUpdateErrorNotice: function onUpdateErrorNotice( errorAnnotations ) {
+							var message;
+							control.setting.notifications.remove( 'csslint_error' );
+
+							if ( 0 !== errorAnnotations.length ) {
+								if ( 1 === errorAnnotations.length ) {
+									message = api.l10n.customCssError.singular.replace( '%d', '1' );
+								} else {
+									message = api.l10n.customCssError.plural.replace( '%d', String( errorAnnotations.length ) );
+								}
+								control.setting.notifications.add( 'csslint_error', new api.Notification( 'csslint_error', {
+									message: message,
+									type: 'error'
+								} ) );
+							}
 						}
-						return;
-					}
+					});
 
-					// Short-circuit if tab key is not being pressed or if a modifier key *is* being pressed.
-					if ( tabKeyCode !== event.keyCode || event.ctrlKey || event.altKey || event.shiftKey ) {
-						return;
-					}
+					control.editor = wp.codeEditor.initialize( $textarea, settings );
 
-					// Prevent capturing Tab characters if Esc was pressed.
-					if ( $textarea.data( 'next-tab-blurs' ) ) {
-						return;
-					}
+					// Refresh when receiving focus.
+					control.editor.codemirror.on( 'focus', function( codemirror ) {
+						codemirror.refresh();
+					});
 
-					selectionStart = textarea.selectionStart;
-					selectionEnd = textarea.selectionEnd;
-					value = textarea.value;
+					/*
+					 * When the CodeMirror instance changes, mirror to the textarea,
+					 * where we have our "true" change event handler bound.
+					 */
+					control.editor.codemirror.on( 'change', function( codemirror ) {
+						suspendEditorUpdate = true;
+						$textarea.val( codemirror.getValue() ).trigger( 'change' );
+						suspendEditorUpdate = false;
+					});
 
-					if ( selectionStart >= 0 ) {
-						textarea.value = value.substring( 0, selectionStart ).concat( '\t', value.substring( selectionEnd ) );
-						$textarea.selectionStart = textarea.selectionEnd = selectionStart + 1;
-					}
+					// Update CodeMirror when the setting is changed by another plugin.
+					control.setting.bind( function( value ) {
+						if ( ! suspendEditorUpdate ) {
+							control.editor.codemirror.setValue( value );
+						}
+					});
 
-					event.stopPropagation();
-					event.preventDefault();
-				} );
-			} );
-		} );
+					// Prevent collapsing section when hitting Esc to tab out of editor.
+					control.editor.codemirror.on( 'keydown', function onKeydown( codemirror, event ) {
+						var escKeyCode = 27;
+						if ( escKeyCode === event.keyCode ) {
+							event.stopPropagation();
+						}
+					});
+				});
+			} else {
+
+				// Allow tabs to be entered in Custom CSS textarea.
+				ready.done( function allowTabs( section, control ) {
+
+					var $textarea = control.container.find( 'textarea' ), textarea = $textarea[0];
+
+					$textarea.on( 'blur', function onBlur() {
+						$textarea.data( 'next-tab-blurs', false );
+					} );
+
+					$textarea.on( 'keydown', function onKeydown( event ) {
+						var selectionStart, selectionEnd, value, tabKeyCode = 9, escKeyCode = 27;
+
+						if ( escKeyCode === event.keyCode ) {
+							if ( ! $textarea.data( 'next-tab-blurs' ) ) {
+								$textarea.data( 'next-tab-blurs', true );
+								event.stopPropagation(); // Prevent collapsing the section.
+							}
+							return;
+						}
+
+						// Short-circuit if tab key is not being pressed or if a modifier key *is* being pressed.
+						if ( tabKeyCode !== event.keyCode || event.ctrlKey || event.altKey || event.shiftKey ) {
+							return;
+						}
+
+						// Prevent capturing Tab characters if Esc was pressed.
+						if ( $textarea.data( 'next-tab-blurs' ) ) {
+							return;
+						}
+
+						selectionStart = textarea.selectionStart;
+						selectionEnd = textarea.selectionEnd;
+						value = textarea.value;
+
+						if ( selectionStart >= 0 ) {
+							textarea.value = value.substring( 0, selectionStart ).concat( '\t', value.substring( selectionEnd ) );
+							$textarea.selectionStart = textarea.selectionEnd = selectionStart + 1;
+						}
+
+						event.stopPropagation();
+						event.preventDefault();
+					});
+				});
+			}
+		})();
 
 		// Toggle visibility of Header Video notice when active state change.
 		api.control( 'header_video', function( headerVideoControl ) {
@@ -5459,6 +5959,13 @@
 				updateChangesetWithReschedule();
 			} );
 		} ());
+
+		// Make sure TinyMCE dialogs appear above Customizer UI.
+		$( document ).one( 'wp-before-tinymce-init', function() {
+			if ( ! window.tinymce.ui.FloatPanel.zIndex || window.tinymce.ui.FloatPanel.zIndex < 500001 ) {
+				window.tinymce.ui.FloatPanel.zIndex = 500001;
+			}
+		} );
 
 		api.trigger( 'ready' );
 	});

@@ -280,7 +280,7 @@
 
 	wp.mce.View.extend = Backbone.View.extend;
 
-	_.extend( wp.mce.View.prototype, {
+	_.extend( wp.mce.View.prototype, /** @lends wp.mce.View.prototype */{
 
 		/**
 		 * The content.
@@ -729,6 +729,9 @@
 					$( node ).data( 'rendered', false );
 					editor.dom.setAttrib( node, 'data-wpview-text', encodeURIComponent( text ) );
 					wp.mce.views.createInstance( type, text, match.options, force ).render();
+
+					editor.selection.select( node );
+					editor.nodeChanged();
 					editor.focus();
 
 					return true;

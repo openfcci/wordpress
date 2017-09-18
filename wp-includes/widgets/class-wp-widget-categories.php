@@ -20,7 +20,6 @@ class WP_Widget_Categories extends WP_Widget {
 	 * Sets up a new Categories widget instance.
 	 *
 	 * @since 2.8.0
-	 * @access public
 	 */
 	public function __construct() {
 		$widget_ops = array(
@@ -35,7 +34,8 @@ class WP_Widget_Categories extends WP_Widget {
 	 * Outputs the content for the current Categories widget instance.
 	 *
 	 * @since 2.8.0
-	 * @access public
+	 *
+	 * @staticvar bool $first_dropdown
 	 *
 	 * @param array $args     Display arguments including 'before_title', 'after_title',
 	 *                        'before_widget', and 'after_widget'.
@@ -124,7 +124,6 @@ class WP_Widget_Categories extends WP_Widget {
 	 * Handles updating settings for the current Categories widget instance.
 	 *
 	 * @since 2.8.0
-	 * @access public
 	 *
 	 * @param array $new_instance New settings for this instance as input by the user via
 	 *                            WP_Widget::form().
@@ -145,7 +144,6 @@ class WP_Widget_Categories extends WP_Widget {
 	 * Outputs the settings form for the Categories widget.
 	 *
 	 * @since 2.8.0
-	 * @access public
 	 *
 	 * @param array $instance Current settings.
 	 */
@@ -158,7 +156,7 @@ class WP_Widget_Categories extends WP_Widget {
 		$dropdown = isset( $instance['dropdown'] ) ? (bool) $instance['dropdown'] : false;
 		?>
 		<p><label for="<?php echo $this->get_field_id('title'); ?>"><?php _e( 'Title:' ); ?></label>
-		<input class="widefat" id="<?php echo $this->get_field_id('title'); ?>" name="<?php echo $this->get_field_name('title'); ?>" placeholder="<?php esc_attr_e( 'Categories' ); ?>" type="text" value="<?php echo esc_attr( $title ); ?>" /></p>
+		<input class="widefat" id="<?php echo $this->get_field_id('title'); ?>" name="<?php echo $this->get_field_name('title'); ?>" type="text" value="<?php echo esc_attr( $title ); ?>" /></p>
 
 		<p><input type="checkbox" class="checkbox" id="<?php echo $this->get_field_id('dropdown'); ?>" name="<?php echo $this->get_field_name('dropdown'); ?>"<?php checked( $dropdown ); ?> />
 		<label for="<?php echo $this->get_field_id('dropdown'); ?>"><?php _e( 'Display as dropdown' ); ?></label><br />
