@@ -1234,8 +1234,21 @@
 		 * @param {object}         [options.params] - Deprecated wrapper for the above properties.
 		 */
 		initialize: function ( id, options ) {
-			var section = this;
-			Container.prototype.initialize.call( section, id, options );
+			var section = this, params;
+			params = options.params || options;
+
+			// Look up the type if one was not supplied.
+			if ( ! params.type ) {
+				_.find( api.sectionConstructor, function( Constructor, type ) {
+					if ( Constructor === section.constructor ) {
+						params.type = type;
+						return true;
+					}
+					return false;
+				} );
+			}
+
+			Container.prototype.initialize.call( section, id, params );
 
 			section.id = id;
 			section.panel = new api.Value();
@@ -2208,19 +2221,22 @@
 		 *
 		 * @since 4.2.0
 		 *
-		 * @returns {object|boolean} Next theme.
+		 * @returns {wp.customize.ThemeControl|boolean} Next theme.
 		 */
 		getNextTheme: function () {
-			var section = this, control, next;
-			control = api.control( section.params.action + '_theme_' + this.currentTheme );
-			next = control.container.next( 'li.customize-control-theme' );
-			if ( ! next.length ) {
+			var section = this, control, nextControl, sectionControls, i;
+			control = api.control( section.params.action + '_theme_' + section.currentTheme );
+			sectionControls = section.controls();
+			i = _.indexOf( sectionControls, control );
+			if ( -1 === i ) {
 				return false;
 			}
-			next = next[0].id.replace( 'customize-control-theme-' + section.params.action, section.params.action + '_theme' );
-			control = api.control( next );
 
-			return control.params.theme;
+			nextControl = sectionControls[ i + 1 ];
+			if ( ! nextControl ) {
+				return false;
+			}
+			return nextControl.params.theme;
 		},
 
 		/**
@@ -2242,19 +2258,22 @@
 		 * Get the previous theme model.
 		 *
 		 * @since 4.2.0
-		 * @returns {object|boolean} Previous theme.
+		 * @returns {wp.customize.ThemeControl|boolean} Previous theme.
 		 */
 		getPreviousTheme: function () {
-			var section = this, control, previous;
-			control = api.control( section.params.action + '_theme_' + this.currentTheme );
-			previous = control.container.prev( 'li.customize-control-theme' );
-			if ( ! previous.length ) {
+			var section = this, control, nextControl, sectionControls, i;
+			control = api.control( section.params.action + '_theme_' + section.currentTheme );
+			sectionControls = section.controls();
+			i = _.indexOf( sectionControls, control );
+			if ( -1 === i ) {
 				return false;
 			}
-			previous = previous[0].id.replace( 'customize-control-theme-' + section.params.action, section.params.action + '_theme' );
-			control = api.control( previous );
 
-			return control.params.theme;
+			nextControl = sectionControls[ i - 1 ];
+			if ( ! nextControl ) {
+				return false;
+			}
+			return nextControl.params.theme;
 		},
 
 		/**
@@ -2501,8 +2520,22 @@
 		 * @param {object}         [options.params] - Deprecated wrapper for the above properties.
 		 */
 		initialize: function ( id, options ) {
-			var panel = this;
-			Container.prototype.initialize.call( panel, id, options );
+			var panel = this, params;
+			params = options.params || options;
+
+			// Look up the type if one was not supplied.
+			if ( ! params.type ) {
+				_.find( api.panelConstructor, function( Constructor, type ) {
+					if ( Constructor === panel.constructor ) {
+						params.type = type;
+						return true;
+					}
+					return false;
+				} );
+			}
+
+			Container.prototype.initialize.call( panel, id, params );
+
 			panel.embed();
 			panel.deferred.embedded.done( function () {
 				panel.ready();
@@ -3088,8 +3121,10 @@
 	 * @param {string} [options.priority=10]    - Order of priority to show the control within the section.
 	 * @param {string} [options.active=true]    - Whether the control is active.
 	 * @param {string} options.section          - The ID of the section the control belongs to.
-	 * @param {string} options.settings.default - The ID of the setting the control relates to.
-	 * @param {string} options.settings.data
+	 * @param {mixed}  [options.setting]        - The ID of the main setting or an instance of this setting.
+	 * @param {mixed}  options.settings         - An object with keys (e.g. default) that maps to setting IDs or Setting/Value objects, or an array of setting IDs or Setting/Value objects.
+	 * @param {mixed}  options.settings.default - The ID of the setting the control relates to.
+	 * @param {string} options.settings.data    - @todo Is this used?
 	 * @param {string} options.label            - Label.
 	 * @param {string} options.description      - Description.
 	 * @param {number} [options.instanceNumber] - Order in which this instance was created in relation to other instances.
@@ -3099,13 +3134,14 @@
 		defaultActiveArguments: { duration: 'fast', completeCallback: $.noop },
 
 		defaults: {
+			label: '',
+			description: '',
 			active: true,
 			priority: 10
 		},
 
 		initialize: function( id, options ) {
-			var control = this,
-				nodes, radios, settings;
+			var control = this, deferredSettingIds = [], settings, gatherSettings, standardTypes;
 
 			control.params = _.extend( {}, control.defaults );
 
@@ -3115,6 +3151,17 @@
 			api.Control.instanceCounter++;
 			if ( ! control.params.instanceNumber ) {
 				control.params.instanceNumber = api.Control.instanceCounter;
+			}
+
+			// Look up the type if one was not supplied.
+			if ( ! control.params.type ) {
+				_.find( api.controlConstructor, function( Constructor, type ) {
+					if ( Constructor === control.constructor ) {
+						control.params.type = type;
+						return true;
+					}
+					return false;
+				} );
 			}
 
 			_.extend( control.params, options.params || options );
@@ -3127,11 +3174,39 @@
 
 			control.id = id;
 			control.selector = '#customize-control-' + id.replace( /\]/g, '' ).replace( /\[/g, '-' ); // Deprecated, likely dead code from time before #28709.
-			control.templateSelector = control.params.templateId || 'customize-control-' + control.params.type + '-content';
 			if ( control.params.content ) {
 				control.container = $( control.params.content );
 			} else {
 				control.container = $( control.selector ); // Likely dead, per above. See #28709.
+			}
+
+			standardTypes = [
+				'button',
+				'checkbox',
+				'color',
+				'date',
+				'datetime-local',
+				'email',
+				'month',
+				'number',
+				'password',
+				'radio',
+				'range',
+				'search',
+				'select',
+				'tel',
+				'time',
+				'text',
+				'textarea',
+				'week',
+				'url'
+			];
+			if ( control.params.templateId ) {
+				control.templateSelector = control.params.templateId;
+			} else if ( _.contains( standardTypes, control.params.type ) && control.container.is( ':empty' ) ) {
+				control.templateSelector = 'customize-control-default-content';
+			} else {
+				control.templateSelector = 'customize-control-' + control.params.type + '-content';
 			}
 
 			control.deferred = {
@@ -3147,31 +3222,6 @@
 
 			control.elements = [];
 
-			nodes  = control.container.find('[data-customize-setting-link]');
-			radios = {};
-
-			nodes.each( function() {
-				var node = $( this ),
-					name;
-
-				if ( node.is( ':radio' ) ) {
-					name = node.prop( 'name' );
-					if ( radios[ name ] ) {
-						return;
-					}
-
-					radios[ name ] = true;
-					node = nodes.filter( '[name="' + name + '"]' );
-				}
-
-				api( node.data( 'customizeSettingLink' ), function( setting ) {
-					var element = new api.Element( node );
-					control.elements.push( element );
-					element.sync( setting );
-					element.set( setting() );
-				});
-			});
-
 			control.active.bind( function ( active ) {
 				var args = control.activeArgumentsQueue.shift();
 				args = $.extend( {}, control.defaultActiveArguments, args );
@@ -3184,55 +3234,103 @@
 
 			api.utils.bubbleChildValueChanges( control, [ 'section', 'priority', 'active' ] );
 
-			/*
-			 * After all settings related to the control are available,
-			 * make them available on the control and embed the control into the page.
-			 */
-			settings = $.map( control.params.settings, function( value ) {
-				return value;
-			});
+			control.settings = {};
 
-			if ( 0 === settings.length ) {
-				control.setting = null;
-				control.settings = {};
-				control.embed();
-			} else {
-				api.apply( api, settings.concat( function() {
-					var key;
+			settings = {};
+			if ( control.params.setting ) {
+				settings['default'] = control.params.setting;
+			}
+			_.extend( settings, control.params.settings );
 
-					control.settings = {};
-					for ( key in control.params.settings ) {
-						control.settings[ key ] = api( control.params.settings[ key ] );
+			// Note: Settings can be an array or an object.
+			_.each( settings, function( setting, key ) {
+				if ( _.isObject( setting ) ) { // @todo Or check if instance of api.Setting?
+					control.settings[ key ] = setting;
+				} else {
+					deferredSettingIds.push( setting );
+				}
+			} );
+
+			gatherSettings = function() {
+
+				// Fill-in all resolved settings.
+				_.each( settings, function ( settingId, key ) {
+					if ( ! control.settings[ key ] && _.isString( settingId ) ) {
+						control.settings[ key ] = api( settingId );
 					}
+				} );
 
-					control.setting = control.settings['default'] || null;
+				// Make sure settings passed as array gets associated with default.
+				if ( control.settings[0] && ! control.settings['default'] ) {
+					control.settings['default'] = control.settings[0];
+				}
 
-					// Add setting notifications to the control notification.
-					_.each( control.settings, function( setting ) {
-						setting.notifications.bind( 'add', function( settingNotification ) {
-							var params = _.extend(
-								{},
-								settingNotification,
-								{
-									setting: setting.id
-								}
-							);
-							control.notifications.add( new api.Notification( setting.id + ':' + settingNotification.code, params ) );
-						} );
-						setting.notifications.bind( 'remove', function( settingNotification ) {
-							control.notifications.remove( setting.id + ':' + settingNotification.code );
-						} );
-					} );
+				// Identify the main setting.
+				control.setting = control.settings['default'] || null;
 
-					control.embed();
-				}) );
+				control.embed();
+			};
+
+			if ( 0 === deferredSettingIds.length ) {
+				gatherSettings();
+			} else {
+				api.apply( api, deferredSettingIds.concat( gatherSettings ) );
 			}
 
 			// After the control is embedded on the page, invoke the "ready" method.
 			control.deferred.embedded.done( function () {
+				control.linkElements();
 				control.setupNotifications();
 				control.ready();
 			});
+		},
+
+		/**
+		 * Link elements between settings and inputs.
+		 *
+		 * @since 4.7.0
+		 * @access public
+		 *
+		 * @returns {void}
+		 */
+		linkElements: function () {
+			var control = this, nodes, radios, element;
+
+			nodes = control.container.find( '[data-customize-setting-link], [data-customize-setting-key-link]' );
+			radios = {};
+
+			nodes.each( function () {
+				var node = $( this ), name, setting;
+
+				if ( node.data( 'customizeSettingLinked' ) ) {
+					return;
+				}
+				node.data( 'customizeSettingLinked', true ); // Prevent re-linking element.
+
+				if ( node.is( ':radio' ) ) {
+					name = node.prop( 'name' );
+					if ( radios[name] ) {
+						return;
+					}
+
+					radios[name] = true;
+					node = nodes.filter( '[name="' + name + '"]' );
+				}
+
+				// Let link by default refer to setting ID. If it doesn't exist, fallback to looking up by setting key.
+				if ( node.data( 'customizeSettingLink' ) ) {
+					setting = api( node.data( 'customizeSettingLink' ) );
+				} else if ( node.data( 'customizeSettingKeyLink' ) ) {
+					setting = control.settings[ node.data( 'customizeSettingKeyLink' ) ];
+				}
+
+				if ( setting ) {
+					element = new api.Element( node );
+					control.elements.push( element );
+					element.sync( setting );
+					element.set( setting() );
+				}
+			} );
 		},
 
 		/**
@@ -3335,6 +3433,26 @@
 		 */
 		setupNotifications: function() {
 			var control = this, renderNotificationsIfVisible, onSectionAssigned;
+
+			// Add setting notifications to the control notification.
+			_.each( control.settings, function( setting ) {
+				if ( ! setting.notifications ) {
+					return;
+				}
+				setting.notifications.bind( 'add', function( settingNotification ) {
+					var params = _.extend(
+						{},
+						settingNotification,
+						{
+							setting: setting.id
+						}
+					);
+					control.notifications.add( new api.Notification( setting.id + ':' + settingNotification.code, params ) );
+				} );
+				setting.notifications.bind( 'remove', function( settingNotification ) {
+					control.notifications.remove( setting.id + ':' + settingNotification.code );
+				} );
+			} );
 
 			control.notifications.container = control.getNotificationsContainerElement();
 
@@ -4980,14 +5098,8 @@
 
 			_.bindAll( control, 'populateSetting', 'updateDaysForMonth', 'updateMinutesForHour', 'populateDateInputs' );
 
-			// @todo This needs https://core.trac.wordpress.org/ticket/37964
 			if ( ! control.setting ) {
-				control.setting = new api.Value();
-			}
-
-			// @todo Should this be? Default should be on client. The default value should be in the setting itself.
-			if ( ! control.setting.get() && control.params.defaultValue ) {
-				control.setting.set( control.params.defaultValue );
+				throw new Error( 'Missing setting' );
 			}
 
 			control.container.find( '.date-input' ).each( function() {
@@ -6354,18 +6466,22 @@
 			publishSettingsBtn = $( '#publish-settings' ),
 			footerActions = $( '#customize-footer-actions' );
 
+		// Set up publish settings section and its controls.
 		api.section( 'publish_settings', function( section ) {
-			var updateButtonsState, trashControl, updateSectionActive, isSectionActive;
+			var updateButtonsState, trashControl, updateSectionActive, isSectionActive, statusControl, dateControl, toggleDateControl, publishWhenTime, pollInterval, updateTimeArrivedPoller, timeArrivedPollingInterval = 1000;
 
 			trashControl = new api.Control( 'trash_changeset', {
 				type: 'button',
 				section: section.id,
 				priority: 30,
-				templateId: 'customize-trash-changeset-control'
+				inputAttrs: {
+					'class': 'button-link button-link-delete',
+					value: api.l10n.discardChanges
+				}
 			} );
 			api.control.add( trashControl );
 			trashControl.deferred.embedded.done( function() {
-				trashControl.container.find( 'button' ).on( 'click', function() {
+				trashControl.container.find( '.button-link' ).on( 'click', function() {
 					if ( confirm( api.l10n.trashConfirm ) ) {
 						wp.customize.previewer.trash();
 					}
@@ -6426,6 +6542,84 @@
 			section.expanded.bind( function( isExpanded ) {
 				publishSettingsBtn.attr( 'aria-expanded', String( isExpanded ) );
 				publishSettingsBtn.toggleClass( 'active', isExpanded );
+			} );
+
+			statusControl = new api.Control( 'changeset_status', {
+				priority: 10,
+				type: 'radio',
+				section: 'publish_settings',
+				setting: api.state( 'selectedChangesetStatus' ),
+				templateId: 'customize-selected-changeset-status-control',
+				label: api.l10n.action,
+				choices: api.settings.changeset.statusChoices
+			} );
+			api.control.add( statusControl );
+
+			dateControl = new api.DateTimeControl( 'changeset_scheduled_date', {
+				priority: 20,
+				section: 'publish_settings',
+				setting: api.state( 'selectedChangesetDate' ),
+				minYear: ( new Date() ).getFullYear(),
+				allowPastDate: false,
+				includeTime: true,
+				twelveHourFormat: /a/i.test( api.settings.timeFormat ),
+				description: api.l10n.scheduleDescription
+			} );
+			dateControl.notifications.alt = true;
+			api.control.add( dateControl );
+
+			publishWhenTime = function() {
+				api.state( 'selectedChangesetStatus' ).set( 'publish' );
+				api.previewer.save();
+			};
+
+			// Start countdown for when the dateTime arrives, or clear interval when it is .
+			updateTimeArrivedPoller = function() {
+				var shouldPoll = (
+					'future' === api.state( 'changesetStatus' ).get() &&
+					'future' === api.state( 'selectedChangesetStatus' ).get() &&
+					api.state( 'changesetDate' ).get() &&
+					api.state( 'selectedChangesetDate' ).get() === api.state( 'changesetDate' ).get() &&
+					api.utils.getRemainingTime( api.state( 'changesetDate' ).get() ) >= 0
+				);
+
+				if ( shouldPoll && ! pollInterval ) {
+					pollInterval = setInterval( function() {
+						var remainingTime = api.utils.getRemainingTime( api.state( 'changesetDate' ).get() );
+						api.state( 'remainingTimeToPublish' ).set( remainingTime );
+						if ( remainingTime <= 0 ) {
+							clearInterval( pollInterval );
+							pollInterval = 0;
+							publishWhenTime();
+						}
+					}, timeArrivedPollingInterval );
+				} else if ( ! shouldPoll && pollInterval ) {
+					clearInterval( pollInterval );
+					pollInterval = 0;
+				}
+			};
+
+			api.state( 'changesetDate' ).bind( updateTimeArrivedPoller );
+			api.state( 'selectedChangesetDate' ).bind( updateTimeArrivedPoller );
+			api.state( 'changesetStatus' ).bind( updateTimeArrivedPoller );
+			api.state( 'selectedChangesetStatus' ).bind( updateTimeArrivedPoller );
+			updateTimeArrivedPoller();
+
+			// Ensure dateControl only appears when selected status is future.
+			dateControl.active.validate = function() {
+				return 'future' === api.state( 'selectedChangesetStatus' ).get();
+			};
+			toggleDateControl = function( value ) {
+				dateControl.active.set( 'future' === value );
+			};
+			toggleDateControl( api.state( 'selectedChangesetStatus' ).get() );
+			api.state( 'selectedChangesetStatus' ).bind( toggleDateControl );
+
+			// Show notification on date control when status is future but it isn't a future date.
+			api.state( 'saving' ).bind( function( isSaving ) {
+				if ( isSaving && 'future' === api.state( 'selectedChangesetStatus' ).get() ) {
+					dateControl.toggleFutureDateNotification( ! dateControl.isFutureDate() );
+				}
 			} );
 		} );
 
@@ -7056,6 +7250,7 @@
 			// Set default states.
 			changesetStatus( api.settings.changeset.status );
 			changesetDate( api.settings.changeset.publishDate );
+			selectedChangesetDate( api.settings.changeset.publishDate );
 			selectedChangesetStatus( '' === api.settings.changeset.status || 'auto-draft' === api.settings.changeset.status ? 'publish' : api.settings.changeset.status );
 			selectedChangesetStatus.link( changesetStatus ); // Ensure that direct updates to status on server via wp.customizer.previewer.save() will update selection.
 			saved( true );
@@ -7978,80 +8173,6 @@
 				}
 			});
 		})();
-
-		// Publish settings section and controls.
-		api.control( 'changeset_status', 'changeset_scheduled_date', function( statusControl, dateControl ) {
-			$.when( statusControl.deferred.embedded, dateControl.deferred.embedded ).done( function() {
-				var radioNodes, statusElement, toggleDateControl, publishWhenTime, pollInterval, updateTimeArrivedPoller, timeArrivedPollingInterval = 1000;
-
-				radioNodes = statusControl.container.find( 'input[type=radio][name]' );
-				statusElement = new api.Element( radioNodes );
-				statusControl.elements.push( statusElement );
-
-				statusElement.sync( api.state( 'selectedChangesetStatus' ) );
-				statusElement.set( api.state( 'selectedChangesetStatus' ).get() );
-
-				dateControl.notifications.alt = true;
-				dateControl.deferred.embedded.done( function() {
-					api.state( 'selectedChangesetDate' ).sync( dateControl.setting );
-				    api.state( 'selectedChangesetDate' ).set( dateControl.setting() );
-				} );
-
-				publishWhenTime = function() {
-					api.state( 'selectedChangesetStatus' ).set( 'publish' );
-					api.previewer.save();
-				};
-
-				// Start countdown for when the dateTime arrives, or clear interval when it is .
-				updateTimeArrivedPoller = function() {
-					var shouldPoll = (
-						'future' === api.state( 'changesetStatus' ).get() &&
-						'future' === api.state( 'selectedChangesetStatus' ).get() &&
-						api.state( 'changesetDate' ).get() &&
-						api.state( 'selectedChangesetDate' ).get() === api.state( 'changesetDate' ).get() &&
-						api.utils.getRemainingTime( api.state( 'changesetDate' ).get() ) >= 0
-					);
-
-					if ( shouldPoll && ! pollInterval ) {
-						pollInterval = setInterval( function() {
-							var remainingTime = api.utils.getRemainingTime( api.state( 'changesetDate' ).get() );
-							api.state( 'remainingTimeToPublish' ).set( remainingTime );
-							if ( remainingTime <= 0 ) {
-								clearInterval( pollInterval );
-								pollInterval = 0;
-								publishWhenTime();
-							}
-						}, timeArrivedPollingInterval );
-					} else if ( ! shouldPoll && pollInterval ) {
-						clearInterval( pollInterval );
-						pollInterval = 0;
-					}
-				};
-
-				api.state( 'changesetDate' ).bind( updateTimeArrivedPoller );
-				api.state( 'selectedChangesetDate' ).bind( updateTimeArrivedPoller );
-				api.state( 'changesetStatus' ).bind( updateTimeArrivedPoller );
-				api.state( 'selectedChangesetStatus' ).bind( updateTimeArrivedPoller );
-				updateTimeArrivedPoller();
-
-				// Ensure dateControl only appears when selected status is future.
-				dateControl.active.validate = function() {
-					return 'future' === statusElement.get();
-				};
-				toggleDateControl = function( value ) {
-					dateControl.active.set( 'future' === value );
-				};
-				toggleDateControl( statusElement.get() );
-				statusElement.bind( toggleDateControl );
-
-				// Show notification on date control when status is future but it isn't a future date.
-				api.state( 'saving' ).bind( function( isSaving ) {
-					if ( isSaving && 'future' === api.state( 'selectedChangesetStatus' ).get() ) {
-						dateControl.toggleFutureDateNotification( ! dateControl.isFutureDate() );
-					}
-				} );
-			} );
-		} );
 
 		// Toggle visibility of Header Video notice when active state change.
 		api.control( 'header_video', function( headerVideoControl ) {
