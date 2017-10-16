@@ -589,6 +589,9 @@
 			data.customize_changeset_autosave = 'true';
 		}
 
+		// Allow plugins to modify the params included with the save request.
+		api.trigger( 'save-request-params', data );
+
 		request = wp.ajax.post( 'customize_save', data );
 
 		request.done( function requestChangesetUpdateDone( data ) {
@@ -3539,7 +3542,7 @@
 				control.container.on( 'click', '.add-content', function() {
 					control.addNewPage();
 				});
-				control.container.on( 'keyup', '.create-item-input', function( e ) {
+				control.container.on( 'keydown', '.create-item-input', function( e ) {
 					if ( 13 === e.which ) { // Enter
 						control.addNewPage();
 					}
@@ -7179,6 +7182,9 @@
 					if ( args && args.title ) {
 						query.customize_changeset_title = args.title;
 					}
+
+					// Allow plugins to modify the params included with the save request.
+					api.trigger( 'save-request-params', query );
 
 					/*
 					 * Note that the dirty customized values will have already been set in the
