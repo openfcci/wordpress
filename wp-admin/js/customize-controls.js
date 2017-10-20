@@ -786,15 +786,19 @@
 			canceled = true;
 		}
 
-		// Remove animation class in case it was already applied.
-		button.removeClass( animationClass );
-
 		params.focusTarget.on( 'focusin', cancelReminder );
 		setTimeout( function() {
 			params.focusTarget.off( 'focusin', cancelReminder );
 
 			if ( ! canceled ) {
 				button.addClass( animationClass );
+				button.one( 'animationend', function() {
+					/*
+					 * Remove animation class to avoid situations in Customizer where
+					 * DOM nodes are moved (re-inserted) and the animation repeats.
+					 */
+					button.removeClass( animationClass );
+				} );
 			}
 		}, params.delay );
 
@@ -3065,13 +3069,17 @@
 					.addClass( 'in-themes-panel' )
 					.delay( 200 ).find( '.customize-themes-full-container' ).addClass( 'animate' );
 
+				_.delay( function() {
+					overlay.addClass( 'themes-panel-expanded' );
+				}, 200 );
+
 				// Automatically open the installed themes section (except on small screens).
 				if ( 600 < window.innerWidth ) {
 					api.section( 'installed_themes' ).expand();
 				}
 			} else {
 				overlay
-					.removeClass( 'in-themes-panel' )
+					.removeClass( 'in-themes-panel themes-panel-expanded' )
 					.find( '.customize-themes-full-container' ).removeClass( 'animate' );
 			}
 		},
@@ -3889,8 +3897,12 @@
 
 			templateId = control.templateSelector;
 
-			// Use default content template when a standard HTML type is used and there isn't a more specific template existing.
-			if ( templateId === 'customize-control-' + control.params.type + '-content' && _.contains( standardTypes, control.params.type ) && ! document.getElementById( 'tmpl-' + templateId ) ) {
+			// Use default content template when a standard HTML type is used, there isn't a more specific template existing, and the control container is empty.
+			if ( templateId === 'customize-control-' + control.params.type + '-content' &&
+				_.contains( standardTypes, control.params.type ) &&
+				! document.getElementById( 'tmpl-' + templateId ) &&
+				0 === control.container.children().length )
+			{
 				templateId = 'customize-control-default-content';
 			}
 
@@ -6986,12 +6998,21 @@
 			} );
 
 			section.expanded.bind( function( isExpanded ) {
+				var defaultChangesetStatus;
 				publishSettingsBtn.attr( 'aria-expanded', String( isExpanded ) );
 				publishSettingsBtn.toggleClass( 'active', isExpanded );
 
 				if ( isExpanded ) {
 					cancelHighlightScheduleButton();
-				} else if ( api.state( 'selectedChangesetStatus' ).get() !== api.state( 'changesetStatus' ).get() ) {
+					return;
+				}
+
+				defaultChangesetStatus = api.state( 'changesetStatus' ).get();
+				if ( '' === defaultChangesetStatus || 'auto-draft' === defaultChangesetStatus ) {
+					defaultChangesetStatus = 'publish';
+				}
+
+				if ( api.state( 'selectedChangesetStatus' ).get() !== defaultChangesetStatus ) {
 					highlightScheduleButton();
 				} else if ( 'future' === api.state( 'selectedChangesetStatus' ).get() && api.state( 'selectedChangesetDate' ).get() !== api.state( 'changesetDate' ).get() ) {
 					highlightScheduleButton();
@@ -8479,6 +8500,7 @@
 			var isInsideIframe = false;
 
 			function isCleanState() {
+				var defaultChangesetStatus;
 
 				/*
 				 * Handle special case of previewing theme switch since some settings (for nav menus and widgets)
@@ -8486,6 +8508,20 @@
 				 */
 				if ( ! api.state( 'activated' ).get() ) {
 					return 0 === api._latestRevision;
+				}
+
+				// Dirty if the changeset status has been changed but not saved yet.
+				defaultChangesetStatus = api.state( 'changesetStatus' ).get();
+				if ( '' === defaultChangesetStatus || 'auto-draft' === defaultChangesetStatus ) {
+					defaultChangesetStatus = 'publish';
+				}
+				if ( api.state( 'selectedChangesetStatus' ).get() !== defaultChangesetStatus ) {
+					return false;
+				}
+
+				// Dirty if scheduled but the changeset date hasn't been saved yet.
+				if ( 'future' === api.state( 'selectedChangesetStatus' ).get() && api.state( 'selectedChangesetDate' ).get() !== api.state( 'changesetDate' ).get() ) {
+					return false;
 				}
 
 				return api.state( 'saved' ).get() && 'auto-draft' !== api.state( 'changesetStatus' ).get();
@@ -8501,6 +8537,8 @@
 
 			function startPromptingBeforeUnload() {
 				api.unbind( 'change', startPromptingBeforeUnload );
+				api.state( 'selectedChangesetStatus' ).unbind( startPromptingBeforeUnload );
+				api.state( 'selectedChangesetDate' ).unbind( startPromptingBeforeUnload );
 
 				// Prompt user with AYS dialog if leaving the Customizer with unsaved changes
 				$( window ).on( 'beforeunload.customize-confirm', function() {
@@ -8513,6 +8551,8 @@
 				});
 			}
 			api.bind( 'change', startPromptingBeforeUnload );
+			api.state( 'selectedChangesetStatus' ).bind( startPromptingBeforeUnload );
+			api.state( 'selectedChangesetDate' ).bind( startPromptingBeforeUnload );
 
 			function requestClose() {
 				var clearedToClose = $.Deferred(), dismissAutoSave = false, dismissLock = false;
