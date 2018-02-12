@@ -1543,11 +1543,12 @@ function img_caption_shortcode( $attr, $content = null ) {
 
 	$atts = shortcode_atts(
 		array(
-			'id'      => '',
-			'align'   => 'alignnone',
-			'width'   => '',
-			'caption' => '',
-			'class'   => '',
+			'id'         => '',
+			'caption_id' => '',
+			'align'      => 'alignnone',
+			'width'      => '',
+			'caption'    => '',
+			'class'      => '',
 		), $attr, 'caption'
 	);
 
@@ -1556,8 +1557,20 @@ function img_caption_shortcode( $attr, $content = null ) {
 		return $content;
 	}
 
-	if ( ! empty( $atts['id'] ) ) {
-		$atts['id'] = 'id="' . esc_attr( sanitize_html_class( $atts['id'] ) ) . '" ';
+	if ( $atts['id'] ) {
+		$att_id     = esc_attr( sanitize_html_class( $atts['id'] ) );
+		$atts['id'] = 'id="' . $att_id . '" ';
+
+		if ( ! $atts['caption_id'] ) {
+			$atts['caption_id'] = 'caption-' . str_replace( '_', '-', $att_id );
+		}
+	}
+
+	$describedby = '';
+
+	if ( $atts['caption_id'] ) {
+		$describedby        = 'aria-describedby="' . $atts['caption_id'] . '" ';
+		$atts['caption_id'] = 'id="' . $atts['caption_id'] . '" ';
 	}
 
 	$class = trim( 'wp-caption ' . $atts['align'] . ' ' . $atts['class'] );
@@ -1589,11 +1602,32 @@ function img_caption_shortcode( $attr, $content = null ) {
 	}
 
 	if ( $html5 ) {
-		$html = '<figure ' . $atts['id'] . $style . 'class="' . esc_attr( $class ) . '">'
-		. do_shortcode( $content ) . '<figcaption class="wp-caption-text">' . $atts['caption'] . '</figcaption></figure>';
+		$html = sprintf(
+			'<figure %s%s%sclass="%s">%s%s</figure>',
+			$atts['id'],
+			$describedby,
+			$style,
+			esc_attr( $class ),
+			do_shortcode( $content ),
+			sprintf(
+				'<figcaption %sclass="wp-caption-text">%s</figcaption>',
+				$atts['caption_id'],
+				$atts['caption']
+			)
+		);
 	} else {
-		$html = '<div ' . $atts['id'] . $style . 'class="' . esc_attr( $class ) . '">'
-		. do_shortcode( $content ) . '<p class="wp-caption-text">' . $atts['caption'] . '</p></div>';
+		$html = sprintf(
+			'<div %s%sclass="%s">%s%s</div>',
+			$atts['id'],
+			$style,
+			esc_attr( $class ),
+			str_replace( '<img ', '<img ' . $describedby, do_shortcode( $content ) ),
+			sprintf(
+				'<p %sclass="wp-caption-text">%s</p>',
+				$atts['caption_id'],
+				$atts['caption']
+			)
+		);
 	}
 
 	return $html;
@@ -2208,10 +2242,10 @@ function wp_get_audio_extensions() {
 	 *
 	 * @since 3.6.0
 	 *
-	 * @param array $extensions An array of support audio formats. Defaults are
-	 *                          'mp3', 'ogg', 'flac', 'm4a', 'wav'.
+	 * @param array $extensions An array of supported audio formats. Defaults are
+	 *                          'mp3', 'aac', 'ogg', 'flac', 'm4a', 'wav'.
 	 */
-	return apply_filters( 'wp_audio_extensions', array( 'mp3', 'ogg', 'flac', 'm4a', 'wav' ) );
+	return apply_filters( 'wp_audio_extensions', array( 'mp3', 'aac', 'ogg', 'flac', 'm4a', 'wav' ) );
 }
 
 /**
@@ -2443,7 +2477,7 @@ function wp_get_video_extensions() {
 	 *
 	 * @since 3.6.0
 	 *
-	 * @param array $extensions An array of support video formats. Defaults are
+	 * @param array $extensions An array of supported video formats. Defaults are
 	 *                          'mp4', 'm4v', 'webm', 'ogv', 'flv'.
 	 */
 	return apply_filters( 'wp_video_extensions', array( 'mp4', 'm4v', 'webm', 'ogv', 'flv' ) );
